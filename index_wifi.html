@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Fruit Ripeness Detector</title>
+  <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@0.8"></script>
+  <style>
+    body { font-family: Arial, sans-serif; text-align: center; padding: 20px; }
+    video { width: 320px; height: 240px; border: 1px solid #ccc; }
+    select, button { margin: 10px; padding: 5px; font-size: 16px; }
+    h2 { margin-top: 20px; }
+  </style>
+</head>
+<body>
+  <h1>Fruit Ripeness Detector</h1>
+
+  <select id="cameraSelect"></select><br>
+  <video id="webcam" autoplay playsinline></video><br>
+  <button onclick="startModel()">Start AI Model</button>
+
+  <h2>Prediction: <span id="prediction">-</span></h2>
+  <h2>Status: <span id="status">Not connected</span></h2>
+
+  <script>
+    const modelURL = "model.json";
+    const metadataURL = "metadata.json";
+    let model, webcam;
+    let cameraSelect = document.getElementById("cameraSelect");
+
+    async function startModel() {
+      model = await tmImage.load(modelURL, metadataURL);
+      await setupCamera();
+      window.requestAnimationFrame(loop);
+    }
+
+    async function setupCamera() {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const videoDevices = devices.filter(d => d.kind === 'videoinput');
+      cameraSelect.innerHTML = "";
+      videoDevices.forEach((device, index) => {
+        const option = document.createElement("option");
+        option.value = device.deviceId;
+        option.text = device.label || `Camera ${index + 1}`;
+        cameraSelect.appendChild(option);
+      });
+
+      const selectedId = cameraSelect.value || videoDevices[0].deviceId;
+      const constraints = {
+        video: { deviceId: selectedId ? { exact: selectedId } : undefined }
+      };
+
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      const video = document.getElementById("webcam");
+      video.srcObject = stream;
+      video.play();
+      webcam = video;
+    }
+
+    async function loop() {
+      if (!model || !webcam) return;
+      const prediction = await model.predict(webcam);
+      const highest = prediction.reduce((a, b) => a.probability > b.probability ? a : b);
+      document.getElementById("prediction").innerText = highest.className;
+      sendToESP32(highest.className);
+      window.requestAnimationFrame(loop);
+    }
+
+    function sendToESP32(result) {
+      fetch("http://192.168.0.112/predict", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prediction: result })
+      })
+      .then(() => {
+        document.getElementById("status").innerText = "Sent to ESP32";
+      })
+      .catch(err => {
+        document.getElementById("status").innerText = "ESP32 not reachable";
+        console.error("ESP32 error:", err);
+      });
+    }
+  </script>
+</body>
+</html>
