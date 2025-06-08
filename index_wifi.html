@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Fruit Ripeness Detector (WiFi)</title>
+  <style>
+    body { font-family: Arial, sans-serif; text-align: center; }
+    video { border: 1px solid #ccc; margin-top: 10px; }
+    #status { margin-top: 10px; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <h2>Fruit Ripeness Detector</h2>
+  <select id="cameraSelect"></select><br>
+  <video id="webcam" autoplay playsinline width="224" height="224"></video><br>
+  <button onclick="start()">Start AI Model</button>
+  <p id="prediction">Prediction: -</p>
+  <p id="status">Status: Not connected</p>
+
+  <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@0.8/dist/teachablemachine-image.min.js"></script>
+  <script>
+    const URL = "./";
+    const ESP32_URL = "http://192.168.0.112"; // Update this if ESP32 IP changes
+    let model, webcam, labelContainer, maxPredictions;
+
+    async function start() {
+      const modelURL = URL + "model.json";
+      const metadataURL = URL + "metadata.json";
+      model = await tmImage.load(modelURL, metadataURL);
+      maxPredictions = model.getTotalClasses();
+
+      await initCamera();
+      window.requestAnimationFrame(loop);
+    }
+
+    async function initCamera() {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const cameras = devices.filter(device => device.kind === 'videoinput');
+      const cameraSelect = document.getElementById("cameraSelect");
+      cameraSelect.innerHTML = "";
+      cameras.forEach((camera, index) => {
+        const option = document.createElement("option");
+        option.value = camera.deviceId;
+        option.text = camera.label || `Camera ${index + 1}`;
+        cameraSelect.appendChild(option);
+      });
+
+      const selectedDeviceId = cameraSelect.value || cameras[0].deviceId;
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { deviceId: selectedDeviceId },
+        audio: false
+      });
+
+      const webcamElement = document.getElementById("webcam");
+      webcamElement.srcObject = stream;
+      webcam = new tmImage.Webcam(224, 224, true);
+      await webcam.setup({ deviceId: selectedDeviceId });
+      await webcam.play();
+      window.requestAnimationFrame(loop);
+    }
+
+    async function loop() {
+      await webcam.update();
+      await predict();
+      window.requestAnimationFrame(loop);
+    }
+
+    async function predict() {
+      const prediction = await model.predict(webcam.canvas);
+      const sorted = prediction.sort((a, b) => b.probability - a.probability);
+      const best = sorted[0].className;
+      document.getElementById("prediction").innerText = "Prediction: " + best;
+      sendToESP32(best);
+    }
+
+    async function sendToESP32(result) {
+      try {
+        const res = await fetch(ESP32_URL + "/predict", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: "result=" + encodeURIComponent(result)
+        });
+        if (res.ok) {
+          document.getElementById("status").innerText = "Status: Sent to ESP32";
+        } else {
+          document.getElementById("status").innerText = "Status: Failed to send";
+        }
+      } catch (err) {
+        document.getElementById("status").innerText = "Status: ESP32 not reachable";
+      }
+    }
+  </script>
+</body>
+</html>
